@@ -1,6 +1,6 @@
 <h2>Redis Search on JSON Data</h2>
 
-#1 Edit the config-pch.properties file and set values based on your env.
+#1 Edit the <b>config-pch.properties</b> file and set values based on your env.
 To run this demo you need only set the connection details to your Redis Server.
 
 
