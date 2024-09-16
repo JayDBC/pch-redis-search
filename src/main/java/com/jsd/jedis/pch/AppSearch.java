@@ -227,13 +227,23 @@ public class AppSearch {
                 for (int q = 0; q < qualArray.length(); q++) {
                     JSONObject qualObject = (JSONObject)qualArray.get(q);
 
-                    qualObject.put("question_id", "" + qualObject.getInt("question_id"));
+                    int question_id = qualObject.getInt("question_id");
+                    qualObject.put("question_id", "" + question_id);
+
+                    //prefix the qual precodes with the question_id
+                    JSONArray precodeArray = qualObject.getJSONArray("precodes");
+
+                    for(int p = 0; p < precodeArray.length(); p++) {
+                        precodeArray.put(p , "" + question_id + " " + precodeArray.getString(p));
+                    }
+
                 }
 
                 //Survey Quota
                 JSONArray quotaArray = surveyObj.getJSONArray("survey_quotas");
 
                 for (int q = 0; q < quotaArray.length(); q++) {
+
                     JSONObject quotaObj = (JSONObject)quotaArray.get(q);
 
                     quotaObj.put("survey_quota_id", "" + quotaObj.getInt("survey_quota_id"));
@@ -241,8 +251,16 @@ public class AppSearch {
                     JSONArray quotaQuestionArray = quotaObj.getJSONArray("questions");
 
                     for(int r = 0; r < quotaQuestionArray.length(); r++) {
-                        JSONObject qqObj = (JSONObject)quotaQuestionArray.get(r);
-                        qqObj.put("question_id", "" + qqObj.getInt("question_id"));
+                        JSONObject quotaQuestionObj =  quotaQuestionArray.getJSONObject(r);
+                        int question_id = quotaQuestionObj.getInt("question_id");
+                       
+                        quotaQuestionObj.put("question_id", "" + question_id);
+
+                        JSONArray quotaPrecodesArray = quotaQuestionObj.getJSONArray("precodes");
+
+                        for(int p = 0; p < quotaPrecodesArray.length(); p++) {
+                            quotaPrecodesArray.put(p, "" + question_id + " " + quotaPrecodesArray.getString(p));
+                        }
                     }
                 }
 
