@@ -8,6 +8,8 @@ import java.util.Properties;
 import java.util.Scanner;
 import java.util.HashMap;
 import java.util.concurrent.ThreadLocalRandom;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import javax.json.JsonObject;
 import javax.json.JsonArray;
@@ -24,6 +26,11 @@ import redis.clients.jedis.Response;
 
 import redis.clients.jedis.search.Query;
 import redis.clients.jedis.search.SearchResult;
+import redis.clients.jedis.search.aggr.AggregationBuilder;
+import redis.clients.jedis.search.aggr.AggregationResult;
+import redis.clients.jedis.search.aggr.Reducers;
+import redis.clients.jedis.search.aggr.Row;
+import redis.clients.jedis.search.aggr.SortedField;
 import redis.clients.jedis.search.Document;
 
 /**
@@ -46,6 +53,9 @@ public class AppSearch {
         String indexName = config.getProperty("index.name");
         String indexDefFile = config.getProperty("index.def.file");
 
+        String indexName2 = config.getProperty("index.name2");
+        String indexDefFile2 = config.getProperty("index.def.file2");
+
         RedisIndexFactory indexFactory = new RedisIndexFactory(configFile);
 
         Scanner s = new Scanner(System.in);
@@ -60,6 +70,7 @@ public class AppSearch {
 
             // DROP the INDEX
             indexFactory.dropIndex(indexName);
+            indexFactory.dropIndex(indexName2);
 
             // DELETE existing KEYS
             System.out.println("[AppSearch] Deleting Existing Keys");
@@ -81,9 +92,30 @@ public class AppSearch {
             //LOAD DATA
             for (int i = 0; i < surveyArray.length(); i++) {
                 JSONObject surveyObj = (JSONObject) surveyArray.get(i);
+                String surveyID = surveyObj.getString("survey_id");
+
                 jedisPipeline.jsonSet(
-                        config.getProperty("data.key.prefix") + counter + "-" + surveyObj.getString("survey_id"),
-                        surveyObj);
+                        config.getProperty("data.key.prefix") + counter + "-" + surveyID, surveyObj);
+
+
+                //LOAD Survey Quota Data discretely
+                JSONArray surveyQuotaArray = surveyObj.getJSONArray("survey_quotas");
+
+
+                for(int q = 0; q < surveyQuotaArray.length(); q++) {
+                    JSONObject surveyQuotaObject = surveyQuotaArray.getJSONObject(q);
+                    surveyQuotaObject.put("survey_id", surveyID);
+                    try {
+                        jedisPipeline.jsonSet(
+                            config.getProperty("data.key.prefix2")  + surveyID + "-" + surveyQuotaObject.getString("survey_quota_id"), surveyQuotaObject); 
+                    }
+                    catch(Exception e) {
+
+                    }
+               
+                }
+
+
                 counter++;
             }
 
@@ -113,10 +145,12 @@ public class AppSearch {
 
             // CREATE the INDEX
             indexFactory.createIndex(indexName, indexDefFile);
+            indexFactory.createIndex(indexName2, indexDefFile2);
 
         }
 
         // PRINT INDEX SCHEMA FOR REF
+        System.out.println(printIndexSchema(indexFactory.getIndexObj(indexDefFile2), indexName2));
         System.out.println(printIndexSchema(indexFactory.getIndexObj(indexDefFile), indexName));
 
         // START SEARCHING
@@ -132,6 +166,35 @@ public class AppSearch {
             if ("bye|quit".indexOf(queryStr) > -1) {
                 break;
             }
+
+            String quotaSurveyFilter = "";
+            String subDelimiter = "AND ";
+
+            //run the sub query for quotas
+            if(queryStr.indexOf(subDelimiter) > -1) {
+
+                String quotaQuery = queryStr.substring(queryStr.indexOf(subDelimiter) + 4);
+
+                quotaQuery = "aggr SurveyID by Count where " + quotaQuery;
+    
+                try {
+                    //System.out.println("[AppSearch] Running Agg Query");
+                    quotaSurveyFilter = executeAggrQuery(quotaQuery, indexName2, jedisPipeline);
+                }
+                catch(Exception e) {
+                    System.err.println("SubQuery Error " + e);
+                }
+
+                queryStr = queryStr.substring(0, queryStr.indexOf(subDelimiter));
+
+                //APPEND SUBQUERY FILTER FOR SurveyID
+                queryStr = queryStr + " " + quotaSurveyFilter;
+
+                
+            }
+
+
+            System.out.println("Modified Query:\n" + queryStr.substring(0, Math.min(100, queryStr.length())) + "...");
 
             Query q = new Query(queryStr);
             q.dialect(Integer.parseInt(config.getProperty("query.dialect", "1")));
@@ -172,33 +235,94 @@ public class AppSearch {
 
     }
 
+    public static String executeAggrQuery(String queryStr, String indexName, Pipeline jedisPipeline) throws Exception {
+
+        String resultString = "NOT FOUND";
+
+        String queryStr1 = queryStr;
+
+        String filterString = "*";
+
+        if (queryStr1.lastIndexOf(" where ") > -1) {
+            filterString = queryStr1.substring(queryStr1.lastIndexOf(" where ") + 7);
+            queryStr1 = queryStr1.substring(0, queryStr1.lastIndexOf(" where "));
+        }
+
+        AggregationBuilder aggr = new AggregationBuilder(filterString);
+
+        //e.g aggr SurveyID by Count where @QuotaQuestionPrecode:{42 18} @QuotaNumRespondents:[100 +inf]
+        String regex = "\\w+\\s+(\\w+)\\s+by\\s+(\\w+)";
+        Pattern pattern = Pattern.compile(regex);
+        Matcher matcher = pattern.matcher(queryStr1);
+
+        if (matcher.find()) {
+            if ("count".equalsIgnoreCase(matcher.group(2))) {
+                aggr.groupBy("@" + matcher.group(1), Reducers.count().as("Count"));
+
+            } else {
+                aggr.groupBy("@" + matcher.group(1), Reducers.sum("@" + matcher.group(2)).as(matcher.group(3)));
+            }
+
+            aggr.sortBy(SortedField.desc("@" + matcher.group(2)));
+
+            //Limit to 1000 records
+            aggr.limit(0, 1000);
+
+        }
+
+        Response<AggregationResult> response = jedisPipeline.ftAggregate(indexName, aggr);
+        jedisPipeline.sync();
+
+        String groupField = matcher.group(1);
+
+        AggregationResult result = response.get();
+
+        if(result.getTotalResults() > 0l) {
+
+            resultString = "";
+
+            List<Row> rows = result.getRows();
+
+            for (Row row : rows) {
+                resultString = resultString + row.getString(groupField) + "|";
+            }
+
+            resultString = resultString.substring(0, resultString.lastIndexOf("|"));
+        }
+
+        return "@" + groupField + ":{"+ resultString + "}";
+    }
+
     public static String printIndexSchema(JsonArray indexArray, String indexName) {
 
         String schemaString = "SCHEMA: " + indexName + "\n";
         HashMap<String, ArrayList<String>> fieldMap = new HashMap<String, ArrayList<String>>();
 
-        for(int i = 0; i < indexArray.size(); i++) {
-            JsonObject fieldObj = (JsonObject)indexArray.get(i);
+        for (int i = 0; i < indexArray.size(); i++) {
+            JsonObject fieldObj = (JsonObject) indexArray.get(i);
 
             String fieldType = fieldObj.getString("type");
             String fieldName = fieldObj.getString("alias");
 
-            if(fieldMap.get(fieldType) == null) {
+            if (fieldMap.get(fieldType) == null) {
                 ArrayList<String> al = new ArrayList<String>();
                 al.add(fieldName);
                 fieldMap.put(fieldType, al);
-            }
-            else {
+            } else {
                 fieldMap.get(fieldType).add(fieldName);
             }
         }
 
-        for(String type : new String[] {"TEXT", "TAG", "NUMERIC"}) {
+        for (String type : new String[] { "TEXT", "TAG", "NUMERIC" }) {
             ArrayList<String> fl = fieldMap.get(type);
+
+            if (fl == null) {
+                continue;
+            }
 
             schemaString = schemaString + type + ": ";
 
-            for(String field : fl) {
+            for (String field : fl) {
                 schemaString = schemaString + field + " | ";
             }
 
@@ -250,6 +374,13 @@ public class AppSearch {
 
                     JSONArray quotaQuestionArray = quotaObj.getJSONArray("questions");
 
+                    if(quotaQuestionArray.length() > 0) {
+                        quotaObj.put("has_question", "Y");
+                    } 
+                    else {
+                        quotaObj.put("has_question", "N");
+                    }
+             
                     for(int r = 0; r < quotaQuestionArray.length(); r++) {
                         JSONObject quotaQuestionObj =  quotaQuestionArray.getJSONObject(r);
                         int question_id = quotaQuestionObj.getInt("question_id");
@@ -258,6 +389,7 @@ public class AppSearch {
 
                         JSONArray quotaPrecodesArray = quotaQuestionObj.getJSONArray("precodes");
 
+                        //PREFIX PreCode with QuestionID
                         for(int p = 0; p < quotaPrecodesArray.length(); p++) {
                             quotaPrecodesArray.put(p, "" + question_id + " " + quotaPrecodesArray.getString(p));
                         }
