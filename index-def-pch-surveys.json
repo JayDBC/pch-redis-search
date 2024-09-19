@@ -32,64 +32,12 @@
 			"separator": ","
 		},
 		{
-			"field": "$.survey_qualifications[*].question_id",
-			"alias": "QualQuestion",
-			"type": "TAG",
-			"sortable": true,
-			"caseSensitive": false,
-			"separator": ","
-		},
-		{
 			"field": "$.survey_qualifications[*].precodes[*]",
 			"alias": "QualQuestionPrecode",
 			"type": "TAG",
 			"sortable": true,
 			"caseSensitive": false,
 			"separator": ","
-		},
-		{
-			"field": "$.survey_quotas[*].survey_quota_id",
-			"alias": "QuotaID",
-			"type": "TAG",
-			"sortable": true,
-			"caseSensitive": false,
-			"separator": ","
-		},
-		{
-			"field": "$.survey_quotas[*].questions[*].question_id",
-			"alias": "QuotaQuestion",
-			"type": "TAG",
-			"sortable": true,
-			"caseSensitive": false,
-			"separator": ","
-		},
-		{
-			"field": "$.survey_quotas[*].questions[*].precodes[*]",
-			"alias": "QuotaQuestionPrecode",
-			"type": "TAG",
-			"sortable": true,
-			"caseSensitive": false,
-			"separator": ","
-		},
-		{
-			"field": "$.survey_quotas[*].survey_quota_type",
-			"alias": "QuotaType",
-			"type": "TAG",
-			"sortable": true,
-			"caseSensitive": false,
-			"separator": ","
-		},
-		{
-			"field": "$.survey_quotas[*].number_of_respondents",
-			"alias": "NumRespond",
-			"type": "NUMERIC",
-			"sortable": true
-		},
-		{
-			"field": "$.survey_quotas[0].number_of_respondents",
-			"alias": "TotalRespondents",
-			"type": "NUMERIC",
-			"sortable": true
 		},
 		{
 			"field": "$.cpi",
